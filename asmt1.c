@@ -116,11 +116,14 @@ void do_assign(longint_t *var1, longint_t *var2);
 void do_plus(longint_t *var1, longint_t *var2);
 void do_mult(longint_t *var1, longint_t *var2);
 void do_powr(longint_t *var1, longint_t *var2);
+void do_divs(longint_t *var1, longint_t *var2);
+void do_mins(longint_t *var1, longint_t *var2);
 void zero_vars(longint_t vars[]);
 longint_t parse_str(char *rhs);
 
 void carry_over(longint_t *var1, int position);
 void get_significant_length(longint_t *var);
+int is_var1_bigger(longint_t *var1, longint_t *var2);
 int overflow(longint_t *var);
 void overflow_print_exit(void);
 void initialise(longint_t *var);
@@ -277,6 +280,8 @@ process_line(longint_t vars[], char *line) {
 		do_mult(vars+varnum, &second_value);
 	} else if (optype == POWR) {
 		do_powr(vars+varnum, &second_value);
+	} else if (optype == DIVS) {
+		do_divs(vars+varnum, &second_value);
 	} else {
 		print_error("operation not available yet");
 		return;
@@ -395,6 +400,11 @@ do_print(int varnum, longint_t *var) {
 */
 void
 do_assign(longint_t *var1, longint_t *var2) {
+	/* check if input value is overflowing */
+	if (overflow(var2)) {
+		overflow_print_exit();
+	}
+	/* if not overflow, do the assign*/
 	initialise(var1);
 	for (int i = 0; i < var2->length; i++) {
 		var1->digits[i] = var2->digits[i];
@@ -474,7 +484,7 @@ do_powr(longint_t *var1, longint_t *var2) {
 	if (var1->length == 1 && var1->digits[0] <= INT_ONE) {
 		return;
 	}
-	/* copy the original value of var1 into a another array */
+	/* copy the original value of var1 into another array */
 	longint_t var1_copy;
 	do_assign(&var1_copy, var1);
 
@@ -488,6 +498,12 @@ do_powr(longint_t *var1, longint_t *var2) {
 		power += temp;
 	}
 
+	/* if power is zero, then make the result to be one */
+	if (power == 0) {
+		initialise(var1);
+		var1->digits[0] = INT_ONE; 
+	}
+
 	/* if integer power overflows, terminate the program */
 	if (power < 0) {
 		overflow_print_exit();
@@ -496,6 +512,129 @@ do_powr(longint_t *var1, longint_t *var2) {
 	/* now do the multiplication power - 1 times */
 	for (int i = 0; i < power - 1; i++) {
 		do_mult(var1, &var1_copy);
+	}
+}
+
+/****************************************************************/
+
+void
+do_divs(longint_t *var1, longint_t *var2) {
+	/* get the significant lengths first */
+	get_significant_length(var1);
+	get_significant_length(var2);
+
+	/* if dividing by zero, print error then exit */
+	if (var2->length == 1 && var2->digits[0] == INT_ZERO) {
+		print_error("Zero divison error, please try again");
+		exit(EXIT_FAILURE);
+	}
+	/* if the dividend is smaller than the divisor, set the value to zero 
+	   and exit */
+	if (!is_var1_bigger(var1, var2)) {
+		initialise(var1);
+		return;
+	}
+
+	/* conditions passed, now set up another longint_t array to hold results 
+	   and initialise it to be to the first part of var1 that has the same 
+	   length as var2 */
+	longint_t quotient, temp_result;
+	initialise(&quotient);
+	initialise(&temp_result);
+	temp_result.length = var2->length;
+
+	/* intialise temp result to be the first part of dividend that has the 
+	   same length as divisor */
+	int length_diff = var1->length - var2->length;
+	for (int i = 0; i < var2->length; i++) {
+		temp_result.digits[i] = var1->digits[length_diff + i];
+	}
+
+	/* setting up quotient index */
+	int quotient_index;
+	if (is_var1_bigger(&temp_result, var2)) {
+		quotient_index = var1->length - var2->length;
+	} else {
+		quotient_index = var1->length - var2->length - 1;
+	}
+	
+	/* everything is fine, do the long divison now */
+	for (int i = 0; i < var1->length; i++) {
+		/* if quotient is allset, end the loop */
+		if (quotient_index < 0) {
+			break;
+		}
+		/* digits of the dividend is taken until a number is greater or equal
+		   to the divisor occurs, and store it in temp_result */
+		int drop_count = 0;
+		while (!is_var1_bigger(&temp_result, var2)) {
+			drop_count++;
+			temp_result.length++;
+
+			/* shift all digits of temp_result to the right, then drop the 
+			   next digit in var1 */
+			for (int j = temp_result.length; j > 0; j--) {
+				temp_result.digits[j] = temp_result.digits[j - 1];
+			}
+			temp_result.digits[0] = var1->digits[length_diff - drop_count - i];
+
+			/* if pull down digits more than once, put a zero and go next */
+			if (drop_count > 1) {
+				quotient.digits[quotient_index] = INT_ZERO;
+				quotient_index--;
+				i++;
+				break;
+			}
+		}
+
+		 /* now temp result is greater than divisor, do subtraction */
+		int greatest_multiple = 0;
+		while (is_var1_bigger(&temp_result, var2)) {
+			do_mins(&temp_result, var2);
+			get_significant_length(&temp_result);
+			greatest_multiple++;
+		}
+		
+		/* greatest multiple calculated, put it into the quotient */
+		quotient.digits[quotient_index] = greatest_multiple;
+		quotient_index--;
+	}
+
+	/* all done, copy the result back to var1 */
+	do_assign(var1, &quotient); 
+}
+
+/****************************************************************/
+
+/* Helper function of do_divs, checks if var1 is bigger than var2
+*/
+int
+is_var1_bigger(longint_t *var1, longint_t *var2) {
+	if (var2->length > var1->length) {
+		return 0;
+	} else if (var2->length == var1->length) {
+		for (int i = var1->length - 1; i >= 0; i--) {
+			if (var2->digits[i] > var1->digits[i]) {
+				return 0;
+			} else if (var1->digits[i] > var2->digits[i]) {
+				return 1;
+			}
+		}
+	}
+	return 1;
+}
+
+/****************************************************************/
+
+/* Helper function of do_divs, do minus (assume no negative numbers) */
+void
+do_mins(longint_t *var1, longint_t *var2) {
+	for (int i = 0; i < var2->length; i++) {
+		var1->digits[i] -= var2->digits[i];
+		if (var1->digits[i] < INT_ZERO) {
+			var1->digits[i] += INT_TEN;
+			var1->digits[i + 1] -= INT_ONE;
+		}
 	}
 }
 
@@ -553,7 +692,7 @@ overflow(longint_t *var) {
 */
 void
 overflow_print_exit(void) {
-	printf("Integer overflow, program terminated\n");
+	print_error("Integer overflow, program terminated");
 	exit(EXIT_FAILURE);
 }
 
